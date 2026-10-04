@@ -1,0 +1,22 @@
+{
+  "short_name": "ケロケロボイス",
+  "name": "かわいく変声！ポップスターPWA",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+    // 注意：実際に icon-192.png, icon-512.png というかわいい画像を用意して配置する必要があります。
+  ],
+  "start_url": "./index.html",
+  "background_color": "#FFEDF6", // パステルピンク
+  "display": "standalone",
+  "scope": "./",
+  "theme_color": "#FFC0CB"
+}
