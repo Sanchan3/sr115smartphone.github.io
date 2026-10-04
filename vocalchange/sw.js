@@ -5,6 +5,8 @@ const urlsToCache = [
   './index.html',
   './processor.js',
   './manifest.json',
+  './icon-192.png', // ←これを追加
+  './icon-512.png'  // ←これを追加
   // ここに icon-192.png などを追加
 ];
 
