@@ -1,61 +1,165 @@
-let mediaRecorder;
-let recordedChunks = [];
-
-// 共通設定（初期化時に一度だけ実行）
-async function setupAudio() {
-  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  await audioContext.audioWorklet.addModule('processor.js');
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ケロケロボイス</title>
   
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const microphone = audioContext.createMediaStreamSource(stream);
-  const robotNode = new AudioWorkletNode(audioContext, 'pass-through-processor');
+  <!-- PWA用の設定ファイルとテーマカラーの読み込み -->
+  <link rel="manifest" href="./manifest.json">
+  <meta name="theme-color" content="#FFC0CB">
   
-  // 録音データを貯めるための専用ノード
-  const streamDestination = audioContext.createMediaStreamDestination();
+  <style>
+    body { 
+      background-color: #FFEDF6; /* パステルピンク */
+      text-align: center; 
+      font-family: sans-serif; 
+      padding: 30px; 
+      color: #333;
+    }
+    .mode-select {
+      background: #fff;
+      padding: 15px;
+      border-radius: 12px;
+      display: inline-block;
+      margin-bottom: 20px;
+    }
+    button { 
+      padding: 15px 30px; 
+      font-size: 18px; 
+      font-weight: bold;
+      margin: 10px; 
+      border-radius: 25px; 
+      border: none; 
+      background-color: #FFC0CB; 
+      color: #fff;
+      cursor: pointer;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    button:disabled { 
+      background-color: #e0e0e0; 
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
 
-  return { audioContext, microphone, robotNode, streamDestination };
-}
-
-// モードを開始する関数
-function startVoiceAction(mode, audioSetup) {
-  const { audioContext, microphone, robotNode, streamDestination } = audioSetup;
+  <h1>🐸 ケロケロボイス 🐸</h1>
+  <p>モードを選んで、マイクに向かって話してね！</p>
   
-  // まずマイクとロボットボイスを繋ぐ
-  microphone.connect(robotNode);
-  
-  // 接続を一旦リセット
-  robotNode.disconnect();
+  <!-- モード選択 -->
+  <div class="mode-select">
+    <label>
+      <input type="radio" name="mode" value="realtime" checked> 
+      リアルタイム（すぐ声が変わる）
+    </label>
+    <br><br>
+    <label>
+      <input type="radio" name="mode" value="record"> 
+      遅延モード（話し終わってから再生）
+    </label>
+  </div>
 
-  if (mode === 'realtime') {
-    // 【リアルタイムモード】直接スピーカーに出力
-    robotNode.connect(audioContext.destination);
-    
-  } else if (mode === 'record') {
-    // 【録音モード】スピーカーには繋がず、録音用ノードに出力
-    robotNode.connect(streamDestination);
-    
-    recordedChunks = [];
-    mediaRecorder = new MediaRecorder(streamDestination.stream);
-    
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) recordedChunks.push(event.data);
-    };
-    
-    mediaRecorder.start();
-  }
-}
+  <!-- 操作ボタン -->
+  <div>
+    <button id="startBtn">🎤 話す</button>
+    <button id="stopBtn" disabled>⏹️ 話し終わる</button>
+  </div>
 
-// 録音モードの時に「話し終わった」タイミングで呼ぶ関数
-function stopAndPlayRecord() {
-  if (mediaRecorder && mediaRecorder.state === 'recording') {
-    mediaRecorder.onstop = () => {
-      // 録音したロボットボイスを1つの音声ファイルに結合して再生
-      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-      const audioUrl = URL.createObjectURL(blob);
-      const audio = new Audio(audioUrl);
-      audio.play(); // ここで話し終わった音声が一気に再生される
-    };
-    
-    mediaRecorder.stop();
-  }
-}
+  <script>
+    let audioSetup = null;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let currentAudio = null; // 再生中の音声を保持
+
+    // 1. オーディオ環境の初期設定（初回のみ実行）
+    async function setupAudio() {
+      if (audioSetup) return audioSetup;
+      
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // processor.js（ロボットボイス処理）を読み込む
+      await audioContext.audioWorklet.addModule('processor.js');
+      
+      // マイクの許可を求めて取得
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const microphone = audioContext.createMediaStreamSource(stream);
+      
+      const robotNode = new AudioWorkletNode(audioContext, 'pass-through-processor');
+      const streamDestination = audioContext.createMediaStreamDestination();
+
+      audioSetup = { audioContext, microphone, robotNode, streamDestination };
+      return audioSetup;
+    }
+
+    // 2. 「話す」ボタンを押したときの処理
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      try {
+        const setup = await setupAudio();
+        const mode = document.querySelector('input[name="mode"]:checked').value;
+        
+        // 前回の再生音が残っていれば止める
+        if (currentAudio) {
+          currentAudio.pause();
+          currentAudio.currentTime = 0;
+        }
+
+        // マイクとロボット処理を繋ぐ
+        setup.microphone.connect(setup.robotNode);
+        setup.robotNode.disconnect(); // 一旦出力先をリセット
+
+        if (mode === 'realtime') {
+          // 【リアルタイムモード】直接スピーカーに繋ぐ
+          setup.robotNode.connect(setup.audioContext.destination);
+          
+        } else if (mode === 'record') {
+          // 【遅延モード】録音用の出口に繋ぐ
+          setup.robotNode.connect(setup.streamDestination);
+          recordedChunks = [];
+          
+          mediaRecorder = new MediaRecorder(setup.streamDestination.stream);
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) recordedChunks.push(event.data);
+          };
+          mediaRecorder.start();
+        }
+
+        // ボタンのON/OFF切り替え
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('stopBtn').disabled = false;
+        
+      } catch (err) {
+        alert('マイクのアクセスが許可されていません。ブラウザの設定を確認してください。');
+        console.error(err);
+      }
+    });
+
+    // 3. 「話し終わる」ボタンを押したときの処理
+    document.getElementById('stopBtn').addEventListener('click', () => {
+      if (!audioSetup) return;
+      const mode = document.querySelector('input[name="mode"]:checked').value;
+
+      if (mode === 'realtime') {
+        // リアルタイムモードは接続を切るだけ
+        audioSetup.robotNode.disconnect();
+        
+      } else if (mode === 'record' && mediaRecorder && mediaRecorder.state === 'recording') {
+        // 遅延モードは録音を止めて、まとまったデータを再生する
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+          const audioUrl = URL.createObjectURL(blob);
+          currentAudio = new Audio(audioUrl);
+          currentAudio.play(); // ここで変換された声が再生される
+        };
+        mediaRecorder.stop();
+        audioSetup.robotNode.disconnect();
+      }
+
+      // ボタンのON/OFF切り替え
+      document.getElementById('startBtn').disabled = false;
+      document.getElementById('stopBtn').disabled = true;
+    });
+  </script>
+</body>
+</html>
