@@ -1,85 +1,61 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="utf-8">
-  <title>かわいく変声！ポップスターPWA</title>
-  <!-- PWA設定 -->
-  <link rel="manifest" href="manifest.json">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#FFC0CB">
+let mediaRecorder;
+let recordedChunks = [];
+
+// 共通設定（初期化時に一度だけ実行）
+async function setupAudio() {
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  await audioContext.audioWorklet.addModule('processor.js');
   
-  <style>
-    /* 簡易的なポップデザインCSS */
-    body {
-      background-color: #FFEDF6; /* パステルピンク */
-      font-family: 'Hiragino Kaku Gothic ProN', sans-serif;
-      text-align: center;
-      margin: 0;
-      padding: 20px;
-    }
-    h1 { color: #FF69B4; font-size: 1.5rem; text-shadow: 1px 1px 0 #FFF; }
-    #start-btn {
-      background-color: #B0E0E6; /* パステル水色 */
-      border: 5px solid #FFF;
-      color: #FFF;
-      font-size: 1.2rem;
-      font-weight: bold;
-      padding: 20px 40px;
-      border-radius: 50px;
-      cursor: pointer;
-      box-shadow: 0 4px 0 #FFF;
-      transition: transform 0.1s, box-shadow 0.1s;
-    }
-    #start-btn:active {
-      transform: translateY(2px);
-      box-shadow: 0 2px 0 #FFF;
-    }
-    #start-btn:disabled {
-      background-color: #CCC;
-      cursor: default;
-    }
-    .warning { color: red; font-size: 0.8rem; margin-top: 20px;}
-  </style>
-</head>
-<body>
-  <h1>かわいく変声！<br>ポップスターPWA</h1>
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const microphone = audioContext.createMediaStreamSource(stream);
+  const robotNode = new AudioWorkletNode(audioContext, 'pass-through-processor');
   
-  <button id="start-btn">変声スタート！⭐</button>
-  <p class="warning">※必ずイヤホンを付けてから押してね！キーンって鳴っちゃうよ！</p>
+  // 録音データを貯めるための専用ノード
+  const streamDestination = audioContext.createMediaStreamDestination();
 
-  <script>
-    // 1. Service Workerの登録
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-          .then(reg => console.log('SW登録成功!', reg))
-          .catch(err => console.log('SW登録失敗...', err));
-      });
-    }
+  return { audioContext, microphone, robotNode, streamDestination };
+}
 
-    // 2. 音声処理ロジック (前のターンのそのまま)
-    document.getElementById('start-btn').addEventListener('click', async () => {
-      try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-        });
+// モードを開始する関数
+function startVoiceAction(mode, audioSetup) {
+  const { audioContext, microphone, robotNode, streamDestination } = audioSetup;
+  
+  // まずマイクとロボットボイスを繋ぐ
+  microphone.connect(robotNode);
+  
+  // 接続を一旦リセット
+  robotNode.disconnect();
 
-        await audioContext.audioWorklet.addModule('processor.js');
-        const source = audioContext.createMediaStreamSource(stream);
-        const workletNode = new AudioWorkletNode(audioContext, 'pass-through-processor');
+  if (mode === 'realtime') {
+    // 【リアルタイムモード】直接スピーカーに出力
+    robotNode.connect(audioContext.destination);
+    
+  } else if (mode === 'record') {
+    // 【録音モード】スピーカーには繋がず、録音用ノードに出力
+    robotNode.connect(streamDestination);
+    
+    recordedChunks = [];
+    mediaRecorder = new MediaRecorder(streamDestination.stream);
+    
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) recordedChunks.push(event.data);
+    };
+    
+    mediaRecorder.start();
+  }
+}
 
-        source.connect(workletNode);
-        workletNode.connect(audioContext.destination);
-
-        document.getElementById('start-btn').disabled = true;
-        document.getElementById('start-btn').textContent = "動作中！🎵";
-
-      } catch (err) {
-        console.error(err);
-        alert('マイクが使えません...');
-      }
-    });
-  </script>
-</body>
-</html>
+// 録音モードの時に「話し終わった」タイミングで呼ぶ関数
+function stopAndPlayRecord() {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.onstop = () => {
+      // 録音したロボットボイスを1つの音声ファイルに結合して再生
+      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+      const audioUrl = URL.createObjectURL(blob);
+      const audio = new Audio(audioUrl);
+      audio.play(); // ここで話し終わった音声が一気に再生される
+    };
+    
+    mediaRecorder.stop();
+  }
+}
